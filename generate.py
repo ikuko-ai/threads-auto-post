@@ -20,7 +20,7 @@ SCHEDULE = [
 
 CLINIC_INFO = """
 【クリニック情報】
-医院名：eastone dental（イーストワンデンタル）
+医院名：イーストワン歯科本八幡
 院長：女性歯科医師（咬合専門医）
 所在地：千葉県市川市（主要駅近く）
 特徴：ドイツ式テレスコープ義歯、インプラントが難しい方への対応、審美歯科
@@ -41,66 +41,13 @@ CLINIC_INFO = """
 歯茎が下がってきた、歯がグラグラする、口臭が気になる
 """
 
-PROMPTS = [
-    ("豆知識", """あなたはeastone dentalのSNS担当者です。
-歯科・口腔ケアに関する豆知識を1つ投稿してください。
-
-{clinic}
-
-条件：
-- 70〜100文字
-- 50代女性が「へえ！」と思える内容
-- 親しみやすい口調
-- ハッシュタグ・絵文字なし
-- 本文のみ出力（説明不要）"""),
-
-    ("共感", """あなたはeastone dentalのSNS担当者です。
-50代女性が抱える歯や口の悩みに共感する投稿を書いてください。
-
-{clinic}
-
-条件：
-- 70〜100文字
-- 「わかります」「ありますよね」「感じていませんか」など共感の言葉を使う
-- 悩みに寄り添う温かい口調
-- ハッシュタグ・絵文字なし
-- 本文のみ出力（説明不要）"""),
-
-    ("教育", """あなたはeastone dentalのSNS担当者です。
-50代女性に役立つ歯科知識・治療に関する教育的な投稿を書いてください。
-
-{clinic}
-
-条件：
-- 70〜100文字
-- 「実は〜」「知っていましたか」など気づきを促す表現を使う
-- 親しみやすい口調
-- ハッシュタグ・絵文字なし
-- 本文のみ出力（説明不要）"""),
-
-    ("価値提供", """あなたはeastone dentalのSNS担当者です。
-eastone dentalの治療・サービスの価値を伝える投稿を書いてください。
-
-{clinic}
-
-条件：
-- 70〜100文字
-- 治療で得られる生活の変化・メリットを具体的に伝える
-- 50代女性の「食べる・話す・笑う」生活の質向上にフォーカス
-- ハッシュタグ・絵文字なし
-- 本文のみ出力（説明不要）"""),
-
-    ("行動促進", """あなたはeastone dentalのSNS担当者です。
-50代女性に相談・来院を促す投稿を書いてください。
-
-{clinic}
-
-条件：
-- 70〜100文字
-- 「一人で悩まないで」「まずはご相談を」など行動を促す言葉を使う
-- 敷居を低く、気軽に来院できる雰囲気を出す
-- ハッシュタグ・絵文字なし
-- 本文のみ出力（説明不要）""")
+# 投稿タイプと対応するテーマ一覧（同日に重複しないよう管理）
+PROMPT_TYPES = [
+    ("豆知識", "歯科・口腔ケアの豆知識"),
+    ("共感", "50代女性の歯の悩みへの共感"),
+    ("教育", "歯科治療・口腔ケアの知識"),
+    ("価値提供", "治療で得られる生活の変化"),
+    ("行動促進", "来院・相談への促し"),
 ]
 
 def get_sheets_service():
@@ -121,9 +68,29 @@ def add_line_breaks(text, chars_per_line=16):
         lines.append(text)
     return "\n".join(lines)
 
-def generate_post(prompt_template):
+def generate_post(post_type, theme, used_texts):
+    """投稿文を生成する（重複チェックあり）"""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    prompt = prompt_template.format(clinic=CLINIC_INFO)
+
+    used_list = "\n".join([f"・{t}" for t in used_texts]) if used_texts else "なし"
+
+    prompt = f"""あなたはイーストワン歯科本八幡のSNS担当者です。
+Threadsに投稿する「{theme}」に関する投稿文を1つ書いてください。
+
+{CLINIC_INFO}
+
+【本日すでに使用した内容（重複・類似禁止）】
+{used_list}
+
+条件：
+- 70〜100文字
+- 医院名を使う場合は「イーストワン歯科本八幡」とする
+- 上記の使用済み内容と同じ・似た内容にしない
+- 文末は「です。」「ます。」「しょう。」のいずれかで終わる
+- ハッシュタグ・絵文字なし
+- 親しみやすい口調
+- 本文のみ出力（説明不要）"""
+
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=300,
@@ -145,7 +112,6 @@ def main():
         body={"values": headers}
     ).execute()
 
-    # 来週分の投稿を生成（今日から7日間）
     today = datetime.now()
     rows = []
 
@@ -153,10 +119,22 @@ def main():
         target_date = today + timedelta(days=day_offset + 1)
         date_str = target_date.strftime("%Y/%m/%d")
 
-        for time_str in SCHEDULE:
-            post_type, prompt_template = random.choice(PROMPTS)
+        # 当日の使用済みテキストを管理
+        used_texts = []
+
+        # 21投稿分のタイプをシャッフルして重複を最小化
+        type_pool = []
+        for i in range(5):  # 21投稿 ÷ 5タイプ = 最低4周以上
+            type_pool.extend(PROMPT_TYPES)
+        random.shuffle(type_pool)
+        type_pool = type_pool[:len(SCHEDULE)]
+
+        for i, time_str in enumerate(SCHEDULE):
+            post_type, theme = type_pool[i]
             print(f"生成中: {date_str} {time_str} [{post_type}]")
-            text = generate_post(prompt_template)
+            text = generate_post(post_type, theme, used_texts)
+            # 改行なしの元テキストを重複チェック用に保存
+            used_texts.append(text.replace("\n", "")[:30])
             rows.append([date_str, time_str, post_type, text, "OK", ""])
 
     # スプレッドシートに書き込み
