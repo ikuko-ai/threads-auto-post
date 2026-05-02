@@ -60,7 +60,7 @@ PROMPTS = [
 {clinic}
 
 条件：
-- 100〜150文字
+- 70〜100文字
 - 「わかります」「ありますよね」「感じていませんか」など共感の言葉を使う
 - 悩みに寄り添う温かい口調
 - ハッシュタグ・絵文字なし
@@ -72,7 +72,7 @@ PROMPTS = [
 {clinic}
 
 条件：
-- 100〜150文字
+- 70〜100文字
 - 「実は〜」「知っていましたか」など気づきを促す表現を使う
 - 親しみやすい口調
 - ハッシュタグ・絵文字なし
@@ -84,7 +84,7 @@ eastone dentalの治療・サービスの価値を伝える投稿を書いてく
 {clinic}
 
 条件：
-- 100〜150文字
+- 70〜100文字
 - 治療で得られる生活の変化・メリットを具体的に伝える
 - 50代女性の「食べる・話す・笑う」生活の質向上にフォーカス
 - ハッシュタグ・絵文字なし
@@ -96,7 +96,7 @@ eastone dentalの治療・サービスの価値を伝える投稿を書いてく
 {clinic}
 
 条件：
-- 100〜150文字
+- 70〜100文字
 - 「一人で悩まないで」「まずはご相談を」など行動を促す言葉を使う
 - 敷居を低く、気軽に来院できる雰囲気を出す
 - ハッシュタグ・絵文字なし
@@ -111,6 +111,16 @@ def get_sheets_service():
     )
     return build("sheets", "v4", credentials=creds)
 
+def add_line_breaks(text, chars_per_line=16):
+    """16文字ごとに改行を追加する"""
+    lines = []
+    while len(text) > chars_per_line:
+        lines.append(text[:chars_per_line])
+        text = text[chars_per_line:]
+    if text:
+        lines.append(text)
+    return "\n".join(lines)
+
 def generate_post(prompt_template):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     prompt = prompt_template.format(clinic=CLINIC_INFO)
@@ -119,7 +129,8 @@ def generate_post(prompt_template):
         max_tokens=300,
         messages=[{"role": "user", "content": prompt}]
     )
-    return message.content[0].text
+    text = message.content[0].text.strip()
+    return add_line_breaks(text)
 
 def main():
     service = get_sheets_service()
