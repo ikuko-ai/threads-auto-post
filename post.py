@@ -3,8 +3,10 @@ import time
 import json
 import urllib.request
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import anthropic
+
+JST = timezone(timedelta(hours=9))
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
@@ -28,7 +30,7 @@ def get_post_from_sheet():
     service = get_sheets_service()
     sheet = service.spreadsheets()
 
-    now = datetime.now()
+    now = datetime.now(JST)
     today_str = now.strftime("%Y/%m/%d")
     time_str = now.strftime("%H:%M")
 
