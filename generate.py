@@ -250,7 +250,7 @@ def main():
     ).execute()
 
     today = datetime.now()
-    rows = []
+    total_rows = 0
 
     for day_offset in range(7):
         target_date = today + timedelta(days=day_offset + 1)
@@ -271,6 +271,7 @@ def main():
         topic_pool = TOPIC_CATEGORIES.copy()
         random.shuffle(topic_pool)
 
+        day_rows = []
         for i, time_str in enumerate(SCHEDULE):
             post_type, theme = type_pool[i]
             topic = topic_pool[i]
@@ -281,17 +282,21 @@ def main():
                 sodan_used = True
             # 改行なしの元テキストを重複チェック用に保存
             used_texts.append(text.replace("\n", "")[:30])
-            rows.append([date_str, time_str, post_type, text, "OK", ""])
+            day_rows.append([date_str, time_str, post_type, text, "OK", ""])
 
-    # スプレッドシートに書き込み
-    sheet.values().append(
-        spreadsheetId=SPREADSHEET_ID,
-        range="シート1!A2",
-        valueInputOption="RAW",
-        body={"values": rows}
-    ).execute()
+        # 1日分ごとにスプレッドシートに書き込み（タイムアウト防止）
+        service = get_sheets_service()
+        sheet = service.spreadsheets()
+        sheet.values().append(
+            spreadsheetId=SPREADSHEET_ID,
+            range="シート1!A2",
+            valueInputOption="RAW",
+            body={"values": day_rows}
+        ).execute()
+        total_rows += len(day_rows)
+        print(f"{date_str} の{len(day_rows)}件を書き込みました")
 
-    print(f"完了：{len(rows)}件の投稿文を生成しました")
+    print(f"完了：合計{total_rows}件の投稿文を生成しました")
 
 if __name__ == "__main__":
     main()
