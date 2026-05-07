@@ -32,7 +32,6 @@ def get_post_from_sheet():
 
     now = datetime.now(JST)
     today_str = now.strftime("%Y/%m/%d")
-    time_str = now.strftime("%H:%M")
 
     result = sheet.values().get(
         spreadsheetId=SPREADSHEET_ID,
@@ -41,26 +40,41 @@ def get_post_from_sheet():
 
     rows = result.get("values", [])
 
+    # 前後5分以内の投稿文を探す
+    best_row = None
+    best_diff = timedelta(minutes=6)  # 5分を超えたら対象外
+
     for i, row in enumerate(rows):
         if len(row) < 4:
             continue
         row_date = row[0]
         row_time = row[1]
         row_status = row[4] if len(row) > 4 else "OK"
-        row_text = row[3]
-        row_revised = row[5] if len(row) > 5 else ""
 
-        if row_date == today_str and row_time == time_str:
-            if row_status == "スキップ":
-                print(f"スキップ: {today_str} {time_str}")
-                return None
+        if row_date != today_str:
+            continue
+        if row_status == "スキップ":
+            continue
 
-            # 修正後の投稿文があればそちらを使用
-            if row_revised.strip():
-                return row_revised.strip()
-            return row_text.strip()
+        try:
+            scheduled = datetime.strptime(f"{today_str} {row_time}", "%Y/%m/%d %H:%M").replace(tzinfo=JST)
+            diff = abs(now - scheduled)
+            if diff < best_diff:
+                best_diff = diff
+                best_row = row
+        except Exception:
+            continue
 
-    print(f"スプレッドシートに該当なし: {today_str} {time_str} → AI生成で投稿")
+    if best_row is not None:
+        row_text = best_row[3]
+        row_revised = best_row[5] if len(best_row) > 5 else ""
+        matched_time = best_row[1]
+        print(f"マッチ: {today_str} {matched_time}（現在時刻との差: {int(best_diff.total_seconds())}秒）")
+        if row_revised.strip():
+            return row_revised.strip()
+        return row_text.strip()
+
+    print(f"スプレッドシートに該当なし: {today_str} {now.strftime('%H:%M')} → AI生成で投稿")
     return generate_fallback_text()
 
 def generate_fallback_text():
