@@ -43,7 +43,7 @@ def get_post_from_sheet():
     # 前後5分以内の投稿文を探す（投稿済み・スキップ除く）
     best_row = None
     best_row_index = None
-    best_diff = timedelta(minutes=6)  # 5分を超えたら対象外
+    best_diff = timedelta(minutes=11)  # 10分を超えたら対象外
 
     for i, row in enumerate(rows):
         if len(row) < 4:
