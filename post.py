@@ -26,7 +26,7 @@ def get_sheets_service():
     return build("sheets", "v4", credentials=creds)
 
 def get_post_from_sheet():
-    """スプレッドシートから今日・今の時間の投稿文を取得"""
+    """スプレッドシートから今日・今の時間の投稿文を取得（投稿済みはスキップ）"""
     service = get_sheets_service()
     sheet = service.spreadsheets()
 
@@ -40,8 +40,9 @@ def get_post_from_sheet():
 
     rows = result.get("values", [])
 
-    # 前後5分以内の投稿文を探す
+    # 前後5分以内の投稿文を探す（投稿済み・スキップ除く）
     best_row = None
+    best_row_index = None
     best_diff = timedelta(minutes=6)  # 5分を超えたら対象外
 
     for i, row in enumerate(rows):
@@ -53,7 +54,7 @@ def get_post_from_sheet():
 
         if row_date != today_str:
             continue
-        if row_status == "スキップ":
+        if row_status in ("スキップ", "投稿済"):
             continue
 
         try:
@@ -62,6 +63,7 @@ def get_post_from_sheet():
             if diff < best_diff:
                 best_diff = diff
                 best_row = row
+                best_row_index = i + 2  # スプレッドシートの行番号（1始まり＋ヘッダー）
         except Exception:
             continue
 
@@ -70,6 +72,15 @@ def get_post_from_sheet():
         row_revised = best_row[5] if len(best_row) > 5 else ""
         matched_time = best_row[1]
         print(f"マッチ: {today_str} {matched_time}（現在時刻との差: {int(best_diff.total_seconds())}秒）")
+
+        # 投稿済みに更新して重複投稿を防ぐ
+        sheet.values().update(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"シート1!E{best_row_index}",
+            valueInputOption="RAW",
+            body={"values": [["投稿済"]]}
+        ).execute()
+
         if row_revised.strip():
             return row_revised.strip()
         return row_text.strip()
