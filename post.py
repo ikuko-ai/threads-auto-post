@@ -74,8 +74,8 @@ def get_post_from_sheet():
             return row_revised.strip()
         return row_text.strip()
 
-    print(f"スプレッドシートに該当なし: {today_str} {now.strftime('%H:%M')} → AI生成で投稿")
-    return generate_fallback_text()
+    print(f"スプレッドシートに該当なし: {today_str} {now.strftime('%H:%M')} → 投稿スキップ")
+    return None
 
 def generate_fallback_text():
     """スプレッドシートに投稿文がない場合はAIで生成"""
