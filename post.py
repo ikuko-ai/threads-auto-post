@@ -40,10 +40,11 @@ def get_post_from_sheet():
 
     rows = result.get("values", [])
 
-    # 前後5分以内の投稿文を探す（投稿済み・スキップ除く）
+    # 過去6分〜未来1分以内の投稿文を探す（投稿済み・スキップ除く）
+    # 5分ごとのcronで確実にカバーするため、過去6分まで遡る
     best_row = None
     best_row_index = None
-    best_diff = timedelta(minutes=11)  # 10分を超えたら対象外
+    best_diff = None
 
     for i, row in enumerate(rows):
         if len(row) < 4:
@@ -59,11 +60,14 @@ def get_post_from_sheet():
 
         try:
             scheduled = datetime.strptime(f"{today_str} {row_time}", "%Y/%m/%d %H:%M").replace(tzinfo=JST)
-            diff = abs(now - scheduled)
-            if diff < best_diff:
-                best_diff = diff
-                best_row = row
-                best_row_index = i + 2  # スプレッドシートの行番号（1始まり＋ヘッダー）
+            diff = now - scheduled  # 正値 = 過去、負値 = 未来
+            # 過去6分以内 または 未来1分以内
+            if timedelta(minutes=-1) <= diff <= timedelta(minutes=6):
+                abs_diff = abs(diff)
+                if best_diff is None or abs_diff < best_diff:
+                    best_diff = abs_diff
+                    best_row = row
+                    best_row_index = i + 2  # スプレッドシートの行番号（1始まり＋ヘッダー）
         except Exception:
             continue
 
