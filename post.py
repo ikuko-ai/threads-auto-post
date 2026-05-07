@@ -40,11 +40,8 @@ def get_post_from_sheet():
 
     rows = result.get("values", [])
 
-    # 過去6分〜未来1分以内の投稿文を探す（投稿済み・スキップ除く）
-    # 5分ごとのcronで確実にカバーするため、過去6分まで遡る
-    best_row = None
-    best_row_index = None
-    best_diff = None
+    # 過去30分以内〜未来1分以内の未投稿をすべて収集（時刻順）
+    pending = []
 
     for i, row in enumerate(rows):
         if len(row) < 4:
@@ -61,36 +58,37 @@ def get_post_from_sheet():
         try:
             scheduled = datetime.strptime(f"{today_str} {row_time}", "%Y/%m/%d %H:%M").replace(tzinfo=JST)
             diff = now - scheduled  # 正値 = 過去、負値 = 未来
-            # 過去6分以内 または 未来1分以内
-            if timedelta(minutes=-1) <= diff <= timedelta(minutes=6):
-                abs_diff = abs(diff)
-                if best_diff is None or abs_diff < best_diff:
-                    best_diff = abs_diff
-                    best_row = row
-                    best_row_index = i + 2  # スプレッドシートの行番号（1始まり＋ヘッダー）
+            # 過去30分以内 または 未来1分以内
+            if timedelta(minutes=-1) <= diff <= timedelta(minutes=30):
+                pending.append((scheduled, i + 2, row))
         except Exception:
             continue
 
-    if best_row is not None:
-        row_text = best_row[3]
-        row_revised = best_row[5] if len(best_row) > 5 else ""
-        matched_time = best_row[1]
-        print(f"マッチ: {today_str} {matched_time}（現在時刻との差: {int(best_diff.total_seconds())}秒）")
+    if not pending:
+        print(f"投稿なし: {today_str} {now.strftime('%H:%M')}")
+        return []
 
-        # 投稿済みに更新して重複投稿を防ぐ
+    # 時刻順にソート
+    pending.sort(key=lambda x: x[0])
+    results = []
+
+    for scheduled, row_index, row in pending:
+        row_text = row[3]
+        row_revised = row[5] if len(row) > 5 else ""
+        text = row_revised.strip() if row_revised.strip() else row_text.strip()
+
+        # 投稿済みに更新
         sheet.values().update(
             spreadsheetId=SPREADSHEET_ID,
-            range=f"シート1!E{best_row_index}",
+            range=f"シート1!E{row_index}",
             valueInputOption="RAW",
             body={"values": [["投稿済"]]}
         ).execute()
 
-        if row_revised.strip():
-            return row_revised.strip()
-        return row_text.strip()
+        print(f"マッチ: {today_str} {row[1]}（現在時刻: {now.strftime('%H:%M')}）")
+        results.append(text)
 
-    print(f"スプレッドシートに該当なし: {today_str} {now.strftime('%H:%M')} → 投稿スキップ")
-    return None
+    return results
 
 def generate_fallback_text():
     """スプレッドシートに投稿文がない場合はAIで生成"""
@@ -134,6 +132,8 @@ def post_to_threads(text):
     print(f"投稿完了: {post_id}")
     print(f"内容: {text}")
 
-text = get_post_from_sheet()
-if text:
+texts = get_post_from_sheet()
+for i, text in enumerate(texts):
+    if i > 0:
+        time.sleep(10)  # 連続投稿の間に10秒待機
     post_to_threads(text)
