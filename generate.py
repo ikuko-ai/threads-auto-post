@@ -418,7 +418,7 @@ def main():
 
     # 7日間で使うトピックを週単位でまとめてシャッフル
     # 53種を3セット用意し、各セットを個別シャッフルして連結（同じトピックが連続しにくい）
-    pool_copies = [SPECIFIC_TOPICS.copy() for _ in range(3)]
+    pool_copies = [SPECIFIC_TOPICS.copy() for _ in range(5)]
     for copy in pool_copies:
         random.shuffle(copy)
     weekly_topic_pool = []
