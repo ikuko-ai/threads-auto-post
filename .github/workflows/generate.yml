@@ -2,7 +2,7 @@ name: Generate Weekly Posts
 
 on:
   schedule:
-    - cron: '0 13 * * 0'  # 毎週日曜 JST 22:00
+    - cron: '0 3 * * 6'  # 毎週土曜 JST 12:00
   workflow_dispatch:  # 手動実行も可能
 
 jobs:
