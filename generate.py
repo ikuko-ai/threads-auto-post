@@ -422,17 +422,12 @@ def main():
     today = datetime.now()
     total_rows = 0
 
-    # 7日間で使うトピックを週単位でまとめてシャッフル
-    # 53種を3セット用意し、各セットを個別シャッフルして連結（同じトピックが連続しにくい）
-    pool_copies = [SPECIFIC_TOPICS.copy() for _ in range(5)]
-    for copy in pool_copies:
-        random.shuffle(copy)
+    # 7日間のトピックを生成（1日ごとに53種から21種を重複なしで抽出）
+    # → 同じ日に同じトピックが2回入ることを完全に防止
     weekly_topic_pool = []
-    for i in range(len(SPECIFIC_TOPICS)):
-        for copy in pool_copies:
-            weekly_topic_pool.append(copy[i])
-    # 147投稿分（7日×21投稿）に切り詰め
-    weekly_topic_pool = weekly_topic_pool[:147]
+    for _ in range(7):
+        day_topics = random.sample(SPECIFIC_TOPICS, 21)
+        weekly_topic_pool.extend(day_topics)
 
     topic_index = 0
 
