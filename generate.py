@@ -114,48 +114,57 @@ TOPICS_BY_CATEGORY = {
 SPECIFIC_TOPICS = [t for topics in TOPICS_BY_CATEGORY.values() for t in topics]
 
 
-def select_day_topics(n=21):
-    """1日分のトピックをカテゴリ均等（最大3本）で選択する"""
-    categories = list(TOPICS_BY_CATEGORY.keys())
-    per_category = n // len(categories)  # 7カテゴリ × 3本 = 21本
+# トピック→カテゴリの逆引き
+TOPIC_TO_CATEGORY = {
+    topic: cat for cat, topics in TOPICS_BY_CATEGORY.items() for topic in topics
+}
 
-    selected = []  # (category, topic)のリスト
 
-    # 各カテゴリからper_category本ずつランダム選択
-    for cat in categories:
-        topics = TOPICS_BY_CATEGORY[cat].copy()
-        random.shuffle(topics)
-        count = min(per_category, len(topics))
-        for topic in topics[:count]:
-            selected.append((cat, topic))
+def build_week_schedule(days=7, per_day=21):
+    """1週間分のトピックを、同じトピックの間隔を最大化して配分する。
 
-    # 不足分を補う（トピック数が少ないカテゴリ対策）
-    if len(selected) < n:
-        remaining_pool = [
-            (cat, topic)
-            for cat in categories
-            for topic in TOPICS_BY_CATEGORY[cat]
-            if topic not in [t for _, t in selected]
-        ]
-        random.shuffle(remaining_pool)
-        selected.extend(remaining_pool[:n - len(selected)])
+    全トピックを使い切るまで同じトピックを出さない「山札」方式に加え、
+    前日に使ったトピックは翌日に出さない制約を課す。
+    52トピックなので、どのトピックも最低でも約2〜3日は間隔が空く。
+    各日の中では同じトピック・同じカテゴリの連続も避ける。
+    返り値: [[21トピック], [21トピック], ... days日分]
+    """
+    deck = []  # 山札（空になったら全トピックを再シャッフルして補充）
+    schedule = []
+    prev_day = set()  # 前日使ったトピック
 
-    # 同カテゴリが連続しないよう並べ替え
-    ordered = []
-    pool = selected.copy()
-    while pool:
-        last_cat = ordered[-1][0] if ordered else None
-        placed = False
-        for i, (cat, topic) in enumerate(pool):
-            if cat != last_cat:
-                ordered.append((cat, topic))
-                pool.pop(i)
-                placed = True
+    for _ in range(days):
+        day = []
+        day_cats = []
+        refills = 0
+        while len(day) < per_day:
+            if not deck:
+                deck = SPECIFIC_TOPICS.copy()
+                random.shuffle(deck)
+                refills += 1
+            picked = None
+            relax_prev = refills > 1   # 山札を2周しても埋まらない時だけ前日制約を緩める
+            relax_cat = refills > 1
+            for i, topic in enumerate(deck):
+                if topic in day:
+                    continue
+                if not relax_prev and topic in prev_day:
+                    continue
+                cat = TOPIC_TO_CATEGORY[topic]
+                if not relax_cat and day_cats and cat == day_cats[-1]:
+                    continue
+                picked = deck.pop(i)
                 break
-        if not placed:
-            ordered.append(pool.pop(0))
+            if picked is None:
+                # 制約を満たす候補が山札に無い → 補充して再挑戦
+                deck = []
+                continue
+            day.append(picked)
+            day_cats.append(TOPIC_TO_CATEGORY[picked])
+        schedule.append(day)
+        prev_day = set(day)
 
-    return [topic for _, topic in ordered[:n]]
+    return schedule
 
 # Threadsで伸びた投稿の傾向・参考知識
 REFERENCE_KNOWLEDGE = """
@@ -511,6 +520,9 @@ def main():
     today = datetime.now()
     total_rows = 0
 
+    # 1週間分のトピックを先にまとめて配分（同トピックの間隔を最大化）
+    week_schedule = build_week_schedule(days=7, per_day=len(SCHEDULE))
+
     for day_offset in range(7):
         target_date = today + timedelta(days=day_offset + 1)
         date_str = target_date.strftime("%Y/%m/%d")
@@ -518,8 +530,8 @@ def main():
         # ご相談フラグは1日ごとにリセット
         sodan_used = False
 
-        # 1日分のトピックをカテゴリ分散して選択
-        day_topics = select_day_topics(len(SCHEDULE))
+        # この日の割り当てトピック
+        day_topics = week_schedule[day_offset]
 
         # 21投稿分のタイプをシャッフルして重複を最小化
         type_pool = []
