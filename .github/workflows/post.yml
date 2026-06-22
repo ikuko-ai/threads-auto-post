@@ -1,11 +1,11 @@
 name: Threads Auto Post
 
 on:
-  # schedule:
-  #   - cron: '*/5 22,23 * * *'
-  #   - cron: '*/5 3,4 * * *'
-  #   - cron: '*/5 8,9 * * *'
-  #   - cron: '*/5 11,12 * * *'
+  schedule:
+    - cron: '*/5 22,23 * * *'  # JST 07:00-08:55（朝の投稿枠）
+    - cron: '*/5 3,4 * * *'    # JST 12:00-13:55（昼の投稿枠）
+    - cron: '*/5 8,9 * * *'    # JST 17:00-18:55（夕の投稿枠）
+    - cron: '*/5 11,12 * * *'  # JST 20:00-21:55（夜の投稿枠）
   workflow_dispatch:
 
 jobs:
