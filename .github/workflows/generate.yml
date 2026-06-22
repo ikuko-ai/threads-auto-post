@@ -4,9 +4,6 @@ on:
   schedule:
     - cron: '0 3 * * 6'  # 毎週土曜 JST 12:00
   workflow_dispatch:  # 手動実行も可能
-  push:
-    paths:
-      - 'generate.py'   # 一時的：generate.py変更のpushで生成を起動（後で削除）
 
 jobs:
   generate:
