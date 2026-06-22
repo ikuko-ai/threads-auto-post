@@ -378,48 +378,38 @@ TOPICS_BY_CATEGORY = {theme: [topic for _, topic in items] for theme, items in T
 
 
 def build_week_schedule(days=7, per_day=21):
-    """1週間分のトピックを、同じトピックの間隔を最大化して配分する。
+    """1週間分のトピックを「1日の中で同じテーマは1回だけ」になるよう配分する。
 
-    全トピックを使い切るまで同じトピックを出さない「山札」方式に加え、
-    前日に使ったトピックは翌日に出さない制約を課す。
-    52トピックなので、どのトピックも最低でも約2〜3日は間隔が空く。
-    各日の中では同じトピック・同じカテゴリの連続も避ける。
+    テーマごとにシャッフル済みキューを持ち、各日に全テーマから1つずつ取り出す。
+    テーマ数=21・1日21投稿なので、各テーマちょうど1回ずつ＝同日テーマ重複ゼロ。
+    キューが尽きたら再シャッフルして補充するので、テーマ内の同じトピックの
+    間隔も最大化される。
     返り値: [[21トピック], [21トピック], ... days日分]
     """
-    deck = []  # 山札（空になったら全トピックを再シャッフルして補充）
+    themes = list(TOPICS_BY_CATEGORY.keys())
+    queues = {th: [] for th in themes}
     schedule = []
-    prev_day = set()  # 前日使ったトピック
 
     for _ in range(days):
         day = []
-        day_cats = []
-        refills = 0
-        while len(day) < per_day:
-            if not deck:
-                deck = SPECIFIC_TOPICS.copy()
-                random.shuffle(deck)
-                refills += 1
-            picked = None
-            relax_prev = refills > 1   # 山札を2周しても埋まらない時だけ前日制約を緩める
-            relax_cat = refills > 1
-            for i, topic in enumerate(deck):
-                if topic in day:
-                    continue
-                if not relax_prev and topic in prev_day:
-                    continue
-                cat = TOPIC_TO_CATEGORY[topic]
-                if not relax_cat and day_cats and cat == day_cats[-1]:
-                    continue
-                picked = deck.pop(i)
-                break
-            if picked is None:
-                # 制約を満たす候補が山札に無い → 補充して再挑戦
-                deck = []
-                continue
-            day.append(picked)
-            day_cats.append(TOPIC_TO_CATEGORY[picked])
+        for th in themes:
+            if not queues[th]:
+                q = TOPICS_BY_CATEGORY[th][:]
+                random.shuffle(q)
+                queues[th] = q
+            day.append(queues[th].pop())
+
+        # 投稿数とテーマ数が合わない場合の調整
+        if len(day) > per_day:
+            random.shuffle(day)
+            day = day[:per_day]
+        elif len(day) < per_day:
+            pool = [t for t in SPECIFIC_TOPICS if t not in day]
+            random.shuffle(pool)
+            day += pool[:per_day - len(day)]
+
+        random.shuffle(day)  # 時間帯の並びをばらす
         schedule.append(day)
-        prev_day = set(day)
 
     return schedule
 
@@ -604,13 +594,25 @@ def _char_bigrams(text):
     return set(cleaned[i:i+2] for i in range(len(cleaned) - 1))
 
 
-def is_too_similar(text, existing_texts, threshold=0.45):
-    """既存投稿のいずれかと類似度が閾値を超えたらTrueを返す（Jaccard係数）"""
+def _head(text, n=12):
+    """改行・空白・記号を除いた書き出しn文字を返す"""
+    return ''.join(c for c in text if c.isalnum())[:n]
+
+
+def is_too_similar(text, existing_texts, threshold=0.38):
+    """既存投稿のいずれかと類似していたらTrueを返す。
+    ①書き出し（先頭10字）が一致 ②Jaccard類似度が閾値超え のいずれか。"""
     new_bg = _char_bigrams(text)
     if not new_bg:
         return False
-    # 重複を判定したい重要キーワード（含まれていれば強く類似とみなす補助）
+    new_head = _head(text)
     for existing in existing_texts:
+        # ① 書き出しが酷似（先頭10字が一致）→ 同じ切り口の重複とみなす
+        ex_head = _head(existing)
+        if len(new_head) >= 8 and len(ex_head) >= 8 and new_head[:10] == ex_head[:10]:
+            print(f"  ✗ 重複検出（書き出し一致）: {existing[:25]}...")
+            return True
+        # ② バイグラムのJaccard類似度
         ex_bg = _char_bigrams(existing)
         if not ex_bg:
             continue
