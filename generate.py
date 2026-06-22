@@ -599,7 +599,7 @@ def _head(text, n=12):
     return ''.join(c for c in text if c.isalnum())[:n]
 
 
-def is_too_similar(text, existing_texts, threshold=0.38):
+def is_too_similar(text, existing_texts, threshold=0.30):
     """既存投稿のいずれかと類似していたらTrueを返す。
     ①書き出し（先頭10字）が一致 ②Jaccard類似度が閾値超え のいずれか。"""
     new_bg = _char_bigrams(text)
