@@ -770,6 +770,46 @@ Threadsに投稿する「{theme}」というテーマ・ジャンル「{post_typ
     print("  警告：チェックNGのため、要確認フラグを立てます")
     return text + "\n※要確認"
 
+def clear_future_rows(service, today):
+    """明日以降の行を削除し、過去・当日の履歴は残す。
+    generate.pyは追記方式のため、再生成前に未来の古い行を消さないと
+    同じ日付・時刻の行が重複し、二重投稿の原因になる。これを防ぐ。"""
+    sheet = service.spreadsheets()
+    result = sheet.values().get(
+        spreadsheetId=SPREADSHEET_ID,
+        range="シート1!A2:F3000"
+    ).execute()
+    rows = result.get("values", [])
+
+    kept = []
+    for row in rows:
+        if not row or not row[0]:
+            continue
+        try:
+            d = datetime.strptime(row[0], "%Y/%m/%d")
+            # 当日以前（過去・本日）の行は履歴として残す
+            if d.date() <= today.date():
+                kept.append((row + [""] * 6)[:6])
+        except Exception:
+            continue  # 日付が壊れた行は捨てる
+
+    # データ領域を全クリア
+    sheet.values().clear(
+        spreadsheetId=SPREADSHEET_ID,
+        range="シート1!A2:F3000"
+    ).execute()
+
+    # 過去・当日の履歴を書き戻す
+    if kept:
+        sheet.values().update(
+            spreadsheetId=SPREADSHEET_ID,
+            range="シート1!A2",
+            valueInputOption="RAW",
+            body={"values": kept}
+        ).execute()
+    print(f"未来の古い行を削除し、履歴{len(kept)}件を保持しました")
+
+
 def main():
     service = get_sheets_service()
 
@@ -791,6 +831,9 @@ def main():
 
     today = datetime.now()
     total_rows = 0
+
+    # 再生成前に明日以降の古い行を削除（二重投稿防止）
+    clear_future_rows(service, today)
 
     # 1週間分のトピックを先にまとめて配分（同トピックの間隔を最大化）
     week_schedule = build_week_schedule(days=7, per_day=len(SCHEDULE))
