@@ -625,6 +625,11 @@ def is_too_similar(text, existing_texts, threshold=0.45):
     return False
 
 
+def char_count(text):
+    """改行・空白を除いた本文の文字数を返す"""
+    return len(text.replace("\n", "").replace(" ", "").replace("　", ""))
+
+
 def verify_post(text):
     """生成した投稿文の医学的正確性をチェックする。明らかな誤りがあればFalseを返す"""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -700,7 +705,7 @@ Threadsに投稿する「{theme}」というテーマ・ジャンル「{post_typ
 {used_list}
 
 条件：
-- 60〜70文字程度
+- 【最優先・絶対厳守】本文は必ず60〜70文字に収める（改行を除いた文字数）。どんなに長くても80文字を絶対に超えない。短く簡潔に書くことを最優先する。説明を盛り込みすぎず、一番伝えたいことだけに絞る
 - 院名（クリニック名）は一切入れない
 - 「主要駅近く」「咬合専門医」「女性院長」という表現は使わない
 - 必ず上記【今回必ず扱うトピック】のテーマのみで書く。他のテーマ・情報を混ぜない
@@ -742,9 +747,10 @@ Threadsに投稿する「{theme}」というテーマ・ジャンル「{post_typ
 
     existing_texts = existing_texts or []
 
-    # 医学チェック＋重複チェックを通るまで最大4回リトライ
+    # 文字数・医学・重複チェックを通るまで最大6回リトライ
+    MAX_CHARS = 80  # 60〜70字目標。80字を超えたら作り直す
     text = ""
-    for attempt in range(4):
+    for attempt in range(6):
         message = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=300,
@@ -755,18 +761,22 @@ Threadsに投稿する「{theme}」というテーマ・ジャンル「{post_typ
         lines = [l for l in text.splitlines() if not l.strip().startswith("#")]
         text = "\n".join(lines).strip()
 
-        # ① 医学チェック
+        # ① 文字数チェック（API不要なので先に判定）
+        if char_count(text) > MAX_CHARS:
+            print(f"  再生成します（文字数{char_count(text)}字オーバー・試行{attempt + 2}回目）")
+            continue
+        # ② 医学チェック
         if not verify_post(text):
             print(f"  再生成します（医学チェックNG・試行{attempt + 2}回目）")
             continue
-        # ② 重複チェック（同日＋過去分との類似）
+        # ③ 重複チェック（同日＋過去分との類似）
         if is_too_similar(text, existing_texts):
             print(f"  再生成します（重複検出・試行{attempt + 2}回目）")
             continue
-        # 両方クリア
+        # すべてクリア
         return text
 
-    # 4回NGの場合はそのまま使用（承認列に警告を入れる）
+    # 全滅時：直近の生成文をそのまま使用（承認列に警告を入れる）
     print("  警告：チェックNGのため、要確認フラグを立てます")
     return text + "\n※要確認"
 
