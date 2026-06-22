@@ -630,6 +630,29 @@ def char_count(text):
     return len(text.replace("\n", "").replace(" ", "").replace("　", ""))
 
 
+def shorten_text(client, text):
+    """長すぎる投稿文を、意味を保ったまま60〜70文字に短く書き直す"""
+    p = f"""次の歯科クリニックのSNS投稿文を、意味とやさしい温かい口調を保ったまま
+60〜70文字（改行を除いた文字数・最大でも80文字）に短く書き直してください。
+- 一番伝えたいことだけに絞り、説明や具体例は削る
+- 改行は意味の区切りで入れる（1行15〜20文字目安）
+- ハッシュタグ・絵文字・見出しなし
+- 本文のみ出力（説明不要）
+
+{text}"""
+    try:
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=200,
+            messages=[{"role": "user", "content": p}]
+        )
+        out = msg.content[0].text.strip()
+        out_lines = [l for l in out.splitlines() if not l.strip().startswith("#")]
+        return "\n".join(out_lines).strip()
+    except Exception:
+        return text
+
+
 def verify_post(text):
     """生成した投稿文の医学的正確性をチェックする。明らかな誤りがあればFalseを返す"""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -748,8 +771,9 @@ Threadsに投稿する「{theme}」というテーマ・ジャンル「{post_typ
     existing_texts = existing_texts or []
 
     # 文字数・医学・重複チェックを通るまで最大6回リトライ
-    MAX_CHARS = 80  # 60〜70字目標。80字を超えたら作り直す
+    MAX_CHARS = 80  # 60〜70字目標。80字を超えたら短縮→それでも超なら作り直す
     text = ""
+    shortest = None  # 最短候補（全滅時の保険）
     for attempt in range(6):
         message = client.messages.create(
             model="claude-haiku-4-5-20251001",
@@ -761,7 +785,17 @@ Threadsに投稿する「{theme}」というテーマ・ジャンル「{post_typ
         lines = [l for l in text.splitlines() if not l.strip().startswith("#")]
         text = "\n".join(lines).strip()
 
-        # ① 文字数チェック（API不要なので先に判定）
+        # 長すぎる場合はAIに要約圧縮させる（ゼロから書くより確実に短くなる）
+        if char_count(text) > MAX_CHARS:
+            shortened = shorten_text(client, text)
+            if char_count(shortened) < char_count(text):
+                text = shortened
+
+        # 最短候補を保持
+        if shortest is None or char_count(text) < char_count(shortest):
+            shortest = text
+
+        # ① 文字数チェック
         if char_count(text) > MAX_CHARS:
             print(f"  再生成します（文字数{char_count(text)}字オーバー・試行{attempt + 2}回目）")
             continue
@@ -776,9 +810,9 @@ Threadsに投稿する「{theme}」というテーマ・ジャンル「{post_typ
         # すべてクリア
         return text
 
-    # 全滅時：直近の生成文をそのまま使用（承認列に警告を入れる）
+    # 全滅時：最も短い候補を採用（承認列に警告を入れる）
     print("  警告：チェックNGのため、要確認フラグを立てます")
-    return text + "\n※要確認"
+    return (shortest or text) + "\n※要確認"
 
 def clear_future_rows(service, today):
     """明日以降の行を削除し、過去・当日の履歴は残す。
