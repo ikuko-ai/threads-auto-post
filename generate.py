@@ -588,20 +588,45 @@ def get_recent_posts(service, days=21):
         return []
 
 
+# 投稿に繰り返し登場する固定の専門用語・必須フレーズ（重複判定から除外する）
+_FIXED_TERMS = [
+    "ドイツ式テレスコープ義歯", "レジリエンツテレスコープ義歯", "テレスコープ義歯",
+    "ハイブリッドレジン", "オーラルフレイル", "カルシウム拮抗薬",
+    "精密な自費の入れ歯", "自費治療",
+]
+
+
+def _alnum(text):
+    s = text
+    for t in _FIXED_TERMS:
+        s = s.replace(t, "")
+    return ''.join(c for c in s if c.isalnum())
+
+
 def _char_bigrams(text):
-    """文字バイグラム集合を返す（改行・空白・記号を除去して比較）"""
-    cleaned = ''.join(c for c in text if c.isalnum())
+    """文字バイグラム集合を返す（固定用語・記号・空白を除いて比較）"""
+    cleaned = _alnum(text)
     return set(cleaned[i:i+2] for i in range(len(cleaned) - 1))
 
 
-def _head(text, n=12):
-    """改行・空白・記号を除いた書き出しn文字を返す"""
-    return ''.join(c for c in text if c.isalnum())[:n]
+def _head(text, n=10):
+    """固定用語を除いた書き出しn文字を返す（同じ切り口の重複判定用）"""
+    return _alnum(text)[:n]
+
+
+def _shares_long_phrase(a, b, n=12):
+    """固定用語を除いて、n文字以上の同一フレーズを共有していればTrue。
+    「失った奥歯は今からでも補える」のような決まり文句の使い回しを検出する。"""
+    ca, cb = _alnum(a), _alnum(b)
+    if len(ca) < n or len(cb) < n:
+        return False
+    grams_b = set(cb[i:i + n] for i in range(len(cb) - n + 1))
+    return any(ca[i:i + n] in grams_b for i in range(len(ca) - n + 1))
 
 
 def is_too_similar(text, existing_texts, threshold=0.30):
     """既存投稿のいずれかと類似していたらTrueを返す。
-    ①書き出し（先頭10字）が一致 ②Jaccard類似度が閾値超え のいずれか。"""
+    ①書き出し一致 ②同一フレーズの使い回し ③Jaccard類似度 のいずれか。"""
     new_bg = _char_bigrams(text)
     if not new_bg:
         return False
@@ -612,7 +637,11 @@ def is_too_similar(text, existing_texts, threshold=0.30):
         if len(new_head) >= 8 and len(ex_head) >= 8 and new_head[:10] == ex_head[:10]:
             print(f"  ✗ 重複検出（書き出し一致）: {existing[:25]}...")
             return True
-        # ② バイグラムのJaccard類似度
+        # ② 同じフレーズ（10字以上）の使い回し
+        if _shares_long_phrase(text, existing):
+            print(f"  ✗ 重複検出（同一フレーズ）: {existing[:25]}...")
+            return True
+        # ③ バイグラムのJaccard類似度
         ex_bg = _char_bigrams(existing)
         if not ex_bg:
             continue
