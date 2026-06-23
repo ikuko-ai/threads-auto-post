@@ -377,41 +377,89 @@ TOPIC_TO_GENRE = {topic: genre for items in TOPICS_DATA.values() for genre, topi
 TOPICS_BY_CATEGORY = {theme: [topic for _, topic in items] for theme, items in TOPICS_DATA.items()}
 
 
+# 内容が狭い・冗長なテーマの「1週間あたり最大登場回数」。
+# 指定が無いテーマは上限なし（多様なので必要数まで使う）。
+# これにより降圧剤など似た投稿しか作れないテーマが毎日出るのを防ぐ。
+THEME_WEEKLY_CAP = {
+    "降圧剤と歯ぐき": 2,
+    "奥歯のかぶせ物は金合金": 2,
+    "健康な歯の価値": 2,
+    "一回の治療を長持ちさせる": 2,
+    "がん・大病への備え": 3,
+    "歯の神経を抜く影響": 3,
+    "保険のかぶせ物とブリッジの限界": 3,
+    "口を整えることは感染予防": 3,
+    "歯と体のバランス": 3,
+    "奥歯と前歯の役割": 3,
+    "タバコと歯ぐき・インプラント": 3,
+}
+
+
 def build_week_schedule(days=7, per_day=21):
-    """1週間分のトピックを「1日の中で同じテーマは1回だけ」になるよう配分する。
+    """1週間分のトピックを配分する。
 
-    テーマごとにシャッフル済みキューを持ち、各日に全テーマから1つずつ取り出す。
-    テーマ数=21・1日21投稿なので、各テーマちょうど1回ずつ＝同日テーマ重複ゼロ。
-    キューが尽きたら再シャッフルして補充するので、テーマ内の同じトピックの
-    間隔も最大化される。
-    返り値: [[21トピック], [21トピック], ... days日分]
+    - 狭い/冗長なテーマ（THEME_WEEKLY_CAP）は週の上限回数までに制限
+    - 残りはトピックが豊富で多様なテーマから補充
+    - 同じ日に同じテーマが2回入らないよう配置（できる範囲で）
+    返り値: [[21トピック]×days]
     """
+    total = days * per_day
     themes = list(TOPICS_BY_CATEGORY.keys())
-    queues = {th: [] for th in themes}
-    schedule = []
+    queues = {th: random.sample(TOPICS_BY_CATEGORY[th], len(TOPICS_BY_CATEGORY[th]))
+              for th in themes}
 
-    for _ in range(days):
-        day = []
-        for th in themes:
-            if not queues[th]:
-                q = TOPICS_BY_CATEGORY[th][:]
-                random.shuffle(q)
-                queues[th] = q
-            day.append(queues[th].pop())
+    # ① 上限つきテーマを上限まで投入
+    pool = []
+    for th in themes:
+        cap = THEME_WEEKLY_CAP.get(th)
+        if cap is not None:
+            take = min(cap, len(queues[th]))
+            pool += queues[th][:take]
+            queues[th] = queues[th][take:]
 
-        # 投稿数とテーマ数が合わない場合の調整
-        if len(day) > per_day:
-            random.shuffle(day)
-            day = day[:per_day]
-        elif len(day) < per_day:
-            pool = [t for t in SPECIFIC_TOPICS if t not in day]
-            random.shuffle(pool)
-            day += pool[:per_day - len(day)]
+    # ② 残り枠を上限なしテーマからラウンドロビンで補充
+    uncapped = [th for th in themes if th not in THEME_WEEKLY_CAP]
+    while len(pool) < total:
+        progressed = False
+        for th in uncapped:
+            if len(pool) >= total:
+                break
+            if queues[th]:
+                pool.append(queues[th].pop(0))
+                progressed = True
+        if not progressed:
+            # 上限なしテーマも尽きたら上限つきテーマの残りも使う
+            leftover = [t for th in themes for t in queues[th]]
+            random.shuffle(leftover)
+            pool += leftover[:total - len(pool)]
+            break
+    pool = pool[:total]
+    random.shuffle(pool)
 
-        random.shuffle(day)  # 時間帯の並びをばらす
-        schedule.append(day)
+    # ③ 7日×per_dayに配分（同日同テーマを避ける）
+    days_list = [[] for _ in range(days)]
+    day_themes = [set() for _ in range(days)]
+    leftover = []
+    for topic in pool:
+        th = TOPIC_TO_CATEGORY[topic]
+        cands = [d for d in range(days)
+                 if len(days_list[d]) < per_day and th not in day_themes[d]]
+        if cands:
+            d = min(cands, key=lambda x: len(days_list[x]))
+            days_list[d].append(topic)
+            day_themes[d].add(th)
+        else:
+            leftover.append(topic)
+    # 同日テーマ回避できなかった分を空きに詰める
+    for topic in leftover:
+        for d in range(days):
+            if len(days_list[d]) < per_day:
+                days_list[d].append(topic)
+                break
 
-    return schedule
+    for d in range(days):
+        random.shuffle(days_list[d])
+    return days_list
 
 # Threadsで伸びた投稿の傾向・参考知識
 REFERENCE_KNOWLEDGE = """
