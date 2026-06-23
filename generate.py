@@ -381,17 +381,27 @@ TOPICS_BY_CATEGORY = {theme: [topic for _, topic in items] for theme, items in T
 # 指定が無いテーマは上限なし（多様なので必要数まで使う）。
 # これにより降圧剤など似た投稿しか作れないテーマが毎日出るのを防ぐ。
 THEME_WEEKLY_CAP = {
-    "降圧剤と歯ぐき": 2,
-    "奥歯のかぶせ物は金合金": 2,
-    "健康な歯の価値": 2,
-    "一回の治療を長持ちさせる": 2,
-    "がん・大病への備え": 3,
-    "歯の神経を抜く影響": 3,
-    "保険のかぶせ物とブリッジの限界": 3,
-    "口を整えることは感染予防": 3,
-    "歯と体のバランス": 3,
-    "奥歯と前歯の役割": 3,
-    "タバコと歯ぐき・インプラント": 3,
+    "精密な入れ歯": 18,
+    "歯周病": 14,
+    "セラミック": 14,
+    "口腔崩壊と全顎的精密治療": 9,
+    "総合": 8,
+    "奥歯がないことの悪影響": 8,
+    "歯科治療の考え方": 7,
+    "健康寿命": 7,
+    "歯の治療は繰り返せない": 6,
+    "健康は歯を整えることから": 6,
+    "保険のかぶせ物とブリッジの限界": 6,
+    "タバコと歯ぐき・インプラント": 5,
+    "歯の神経を抜く影響": 5,
+    "がん・大病への備え": 5,
+    "口を整えることは感染予防": 5,
+    "奥歯と前歯の役割": 5,
+    "歯と体のバランス": 5,
+    "一回の治療を長持ちさせる": 4,
+    "降圧剤と歯ぐき": 3,
+    "奥歯のかぶせ物は金合金": 3,
+    "健康な歯の価値": 3,
 }
 
 
@@ -436,26 +446,16 @@ def build_week_schedule(days=7, per_day=21):
     pool = pool[:total]
     random.shuffle(pool)
 
-    # ③ 7日×per_dayに配分（同日同テーマを避ける）
+    # ③ 7日×per_dayに配分：各テーマを曜日にも均等に散らす
     days_list = [[] for _ in range(days)]
-    day_themes = [set() for _ in range(days)]
-    leftover = []
+    theme_count = [{} for _ in range(days)]  # 日ごとのテーマ別カウント
     for topic in pool:
         th = TOPIC_TO_CATEGORY[topic]
-        cands = [d for d in range(days)
-                 if len(days_list[d]) < per_day and th not in day_themes[d]]
-        if cands:
-            d = min(cands, key=lambda x: len(days_list[x]))
-            days_list[d].append(topic)
-            day_themes[d].add(th)
-        else:
-            leftover.append(topic)
-    # 同日テーマ回避できなかった分を空きに詰める
-    for topic in leftover:
-        for d in range(days):
-            if len(days_list[d]) < per_day:
-                days_list[d].append(topic)
-                break
+        avail = [d for d in range(days) if len(days_list[d]) < per_day]
+        # そのテーマが最も少ない日 → 次に総数が少ない日を選ぶ
+        d = min(avail, key=lambda x: (theme_count[x].get(th, 0), len(days_list[x])))
+        days_list[d].append(topic)
+        theme_count[d][th] = theme_count[d].get(th, 0) + 1
 
     for d in range(days):
         random.shuffle(days_list[d])
