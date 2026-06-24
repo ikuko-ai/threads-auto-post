@@ -898,7 +898,8 @@ def clear_future_rows(service, today):
     generate.pyは追記方式のため、再生成前に未来の古い行を消さないと
     同じ日付・時刻の行が重複し二重投稿の原因になる。さらに古い履歴を
     残し続けるとシートが肥大化し、投稿読み取り範囲を超えて投稿されなく
-    なるため、直近21日分だけ残して古い行は削除する。"""
+    なるため、直近30日分だけ残して古い行は削除する（重複チェックは
+    過去28日を参照するので30日残せば常に揃う）。"""
     sheet = service.spreadsheets()
     result = sheet.values().get(
         spreadsheetId=SPREADSHEET_ID,
@@ -906,14 +907,14 @@ def clear_future_rows(service, today):
     ).execute()
     rows = result.get("values", [])
 
-    cutoff = today.date() - timedelta(days=21)
+    cutoff = today.date() - timedelta(days=30)
     kept = []
     for row in rows:
         if not row or not row[0]:
             continue
         try:
             d = datetime.strptime(row[0], "%Y/%m/%d").date()
-            # 直近21日〜当日の履歴だけ残す（未来と古すぎる分は削除）
+            # 直近30日〜当日の履歴だけ残す（未来と古すぎる分は削除）
             if cutoff <= d <= today.date():
                 kept.append((row + [""] * 6)[:6])
         except Exception:
