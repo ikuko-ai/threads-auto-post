@@ -894,24 +894,27 @@ Threadsに投稿する「{theme}」というテーマ・ジャンル「{post_typ
     return (shortest or text) + "\n※要確認"
 
 def clear_future_rows(service, today):
-    """明日以降の行を削除し、過去・当日の履歴は残す。
+    """明日以降の行と古すぎる履歴を削除する。
     generate.pyは追記方式のため、再生成前に未来の古い行を消さないと
-    同じ日付・時刻の行が重複し、二重投稿の原因になる。これを防ぐ。"""
+    同じ日付・時刻の行が重複し二重投稿の原因になる。さらに古い履歴を
+    残し続けるとシートが肥大化し、投稿読み取り範囲を超えて投稿されなく
+    なるため、直近21日分だけ残して古い行は削除する。"""
     sheet = service.spreadsheets()
     result = sheet.values().get(
         spreadsheetId=SPREADSHEET_ID,
-        range="シート1!A2:F3000"
+        range="シート1!A2:F10000"
     ).execute()
     rows = result.get("values", [])
 
+    cutoff = today.date() - timedelta(days=21)
     kept = []
     for row in rows:
         if not row or not row[0]:
             continue
         try:
-            d = datetime.strptime(row[0], "%Y/%m/%d")
-            # 当日以前（過去・本日）の行は履歴として残す
-            if d.date() <= today.date():
+            d = datetime.strptime(row[0], "%Y/%m/%d").date()
+            # 直近21日〜当日の履歴だけ残す（未来と古すぎる分は削除）
+            if cutoff <= d <= today.date():
                 kept.append((row + [""] * 6)[:6])
         except Exception:
             continue  # 日付が壊れた行は捨てる
@@ -919,7 +922,7 @@ def clear_future_rows(service, today):
     # データ領域を全クリア
     sheet.values().clear(
         spreadsheetId=SPREADSHEET_ID,
-        range="シート1!A2:F3000"
+        range="シート1!A2:F10000"
     ).execute()
 
     # 過去・当日の履歴を書き戻す

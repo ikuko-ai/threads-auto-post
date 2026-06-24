@@ -35,7 +35,7 @@ def get_post_from_sheet():
 
     result = sheet.values().get(
         spreadsheetId=SPREADSHEET_ID,
-        range="シート1!A2:F1000"
+        range="シート1!A2:F10000"
     ).execute()
 
     rows = result.get("values", [])
