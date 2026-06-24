@@ -1,3 +1,4 @@
+# Threads自動投稿スクリプト
 import os
 import time
 import json

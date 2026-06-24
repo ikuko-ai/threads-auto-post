@@ -7,6 +7,9 @@ on:
     - cron: '*/5 8,9 * * *'    # JST 17:00-18:55（夕の投稿枠）
     - cron: '*/5 11,12 * * *'  # JST 20:00-21:55（夜の投稿枠）
   workflow_dispatch:
+  push:
+    paths:
+      - 'post.py'   # 一時的：post.py変更のpushで投稿を起動（後で削除）
 
 jobs:
   post:
