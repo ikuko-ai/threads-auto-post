@@ -58,8 +58,9 @@ def get_post_from_sheet():
         try:
             scheduled = datetime.strptime(f"{today_str} {row_time}", "%Y/%m/%d %H:%M").replace(tzinfo=JST)
             diff = now - scheduled  # 正値 = 過去、負値 = 未来
-            # 過去30分以内 または 未来1分以内
-            if timedelta(minutes=-1) <= diff <= timedelta(minutes=30):
+            # 予定時刻を過ぎた未投稿はすべて対象（GitHubの実行遅延・取りこぼし対策）
+            # 実行が遅れても、次に動いた時に当日分をまとめてキャッチアップする
+            if diff >= timedelta(minutes=-1):
                 pending.append((scheduled, i + 2, row))
         except Exception:
             continue
