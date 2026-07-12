@@ -1,7 +1,6 @@
 name: Generate Weekly Posts
 
 on:
-  push:  # 一時トリガー：上限復旧後のキャッチアップ生成用（起動確認後に削除する）
   schedule:
     - cron: '0 3 * * 6'  # 毎週土曜 JST 12:00
   workflow_dispatch:  # 手動実行も可能
