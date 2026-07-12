@@ -652,9 +652,11 @@ def _head(text, n=10):
     return _alnum(text)[:n]
 
 
-def _shares_long_phrase(a, b, n=12):
+def _shares_long_phrase(a, b, n=18):
     """固定用語を除いて、n文字以上の同一フレーズを共有していればTrue。
-    「失った奥歯は今からでも補える」のような決まり文句の使い回しを検出する。"""
+    「失った奥歯は今からでも補える」のような決まり文句の使い回しを検出する。
+    履歴を全文で比較するようになった際、n=12だと過去566件との偶然の
+    一致が多発し生成の63%がスキップになったため、n=18に緩和した。"""
     ca, cb = _alnum(a), _alnum(b)
     if len(ca) < n or len(cb) < n:
         return False
@@ -675,7 +677,7 @@ def is_too_similar(text, existing_texts, threshold=0.30):
         if len(new_head) >= 8 and len(ex_head) >= 8 and new_head[:10] == ex_head[:10]:
             print(f"  ✗ 重複検出（書き出し一致）: {existing[:25]}...")
             return True
-        # ② 同じフレーズ（10字以上）の使い回し
+        # ② 同じフレーズ（18字以上）の使い回し
         if _shares_long_phrase(text, existing):
             print(f"  ✗ 重複検出（同一フレーズ）: {existing[:25]}...")
             return True
