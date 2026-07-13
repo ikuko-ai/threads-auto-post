@@ -468,6 +468,17 @@ REFERENCE_KNOWLEDGE = """
 ・50代のうちに歯を整えておくと70代のランチや旅行の誘いが楽しくなる
 ・歯がきれいだと若く見られる
 
+【2026年7月 実績1,768投稿の定量分析で確認した勝ちパターン（1万ビュー超率が高い順）】
+・患者エピソード・ビフォーアフター型が最強（1万超率23%）：「全部抜いて総入れ歯と診断された30代→実際に抜いたのは2本だけ」「1本のインプラントを勧められ全体を診てもらえず後悔」など、診断や治療の意外な展開を物語で
+・銀歯・保険の被せ物の真実系（同20%）：「笑うたびに見える銀歯をママ友の前で気にする」「保険の白い被せ物は素材の性質上だんだん黄ばむ」
+・「ご存知ですか？」型の意外な事実（同16%）：「歯周病菌が心筋梗塞の血管から検出」「入れ歯安定剤を使い続けると顎の骨が痩せて余計合わなくなる」
+・お金・投資・資産の比喩：「50代での歯への投資が70代のあなたを救う」「バッグや時計は買い替えられるが歯は買い替えられない」
+・短い問いかけ＋含み残し：「保険の入れ歯だから仕方ないと思っていませんか？」のように答えを言い切らず写真や続きに委ねる一言型
+【同分析で確認した弱いパターン（避けるか比率を下げる）】
+・セルフケア豆知識（歯磨き・フロスのハウツー）は平均閲覧が全テーマ中最下位
+・「〜な方へ」で始まる呼びかけ型は1万超率7%と低い
+・「◯選」の数字リスト型も平均以下
+
 【Tarzan記事より：歯と健康の科学的事実】
 ・歯の病気を放置すると2年間で医療費が1.7倍になる
 ・歯が20本以上ある人は健康寿命が長い傾向がある
@@ -599,6 +610,40 @@ def load_obsidian_knowledge():
         with open(knowledge_path, "r", encoding="utf-8") as f:
             return f.read()
     return ""
+
+
+def load_winning_posts():
+    """winning_posts.md（実績上位投稿。threads-analysis/make_winning_posts.pyが自動生成）を読み込む。
+
+    戻り値: (全文, 本文テキストのリスト) のタプル。
+    - 全文：ファイルの内容そのまま（無ければ空文字）
+    - 本文リスト：'> ' で始まる引用行を投稿ごとに連結したテキストのリスト
+    ファイルが存在しない・パースに失敗した場合は例外を送出せず ("", []) を返す。
+    """
+    try:
+        winning_posts_path = os.path.join(os.path.dirname(__file__), "winning_posts.md")
+        if not os.path.exists(winning_posts_path):
+            return "", []
+        with open(winning_posts_path, "r", encoding="utf-8") as f:
+            full_text = f.read()
+
+        texts = []
+        current_lines = []
+        for line in full_text.splitlines():
+            if line.startswith("> "):
+                current_lines.append(line[2:])
+            else:
+                if current_lines:
+                    texts.append("\n".join(current_lines))
+                    current_lines = []
+        if current_lines:
+            texts.append("\n".join(current_lines))
+
+        return full_text, texts
+    except Exception as e:
+        print(f"winning_posts.mdの読み込みに失敗: {e}")
+        return "", []
+
 
 def get_recent_posts(service, days=21):
     """スプレッドシートから直近N日間の投稿テキストを取得（重複防止用）"""
@@ -777,6 +822,16 @@ def generate_post(post_type, theme, used_texts, topic, sodan_used=False, day_top
     if obsidian_knowledge:
         obsidian_section = f"\n【歯科知識ベース（参考資料・トーンの参考のみ。内容をそのまま使用しないこと）】\n{obsidian_knowledge}\n"
 
+    # 実績上位投稿（winning_posts.md）を読み込む
+    winning_posts_full_text, _ = load_winning_posts()
+    winning_posts_section = ""
+    if winning_posts_full_text:
+        winning_posts_section = (
+            "\n【直近の実績で閲覧数が多かった投稿（切り口・構成・文体の参考にする。"
+            "ただし文言の丸写し・微修正での再利用は禁止。同じ切り口でも題材や表現は新しく作ること）】\n"
+            f"{winning_posts_full_text[:3000]}\n"
+        )
+
     # ジャンル別の書き方ガイド
     genre_guide = GENRE_GUIDE.get(post_type, "")
     nsen_instruction = ""
@@ -794,7 +849,7 @@ Threadsに投稿する「{theme}」というテーマ・ジャンル「{post_typ
 {CLINIC_INFO}
 
 【参考情報（トーン・口調・切り口の参考のみ。内容・フレーズをそのままコピーしないこと）】
-{REFERENCE_KNOWLEDGE}{obsidian_section}
+{REFERENCE_KNOWLEDGE}{obsidian_section}{winning_posts_section}
 【今回必ず扱うトピック（このテーマのみで書くこと・他のテーマを混ぜない）】
 {topic}
 
@@ -943,6 +998,10 @@ def main():
     all_used_texts = get_recent_posts(service, days=28)
     # 類似度チェック用のフルテキストリスト（過去投稿＋今回生成分を蓄積）
     all_full_texts = list(all_used_texts)
+    # 実績上位投稿（winning_posts.md）も比較対象に加え、丸写し・微修正の再利用を
+    # is_too_similar による機械的チェックで弾けるようにする
+    _, winning_posts_texts = load_winning_posts()
+    all_full_texts += winning_posts_texts
 
     sheet = service.spreadsheets()
 
