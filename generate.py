@@ -746,21 +746,30 @@ def char_count(text):
     return len(text.replace("\n", "").replace(" ", "").replace("　", ""))
 
 
-def shorten_text(client, text):
-    """長すぎる投稿文を、意味を保ったまま60〜70文字に短く書き直す"""
-    p = f"""次の歯科クリニックのSNS投稿文を、意味とやさしい温かい口調を保ったまま
+# shorten_text()の指示文（静的・投稿ごとに変わらない）。system側でcache_controlを
+# かける。対象の投稿文（動的）はuserメッセージ側に残す。
+_SHORTEN_SYSTEM_PROMPT = """次の歯科クリニックのSNS投稿文を、意味とやさしい温かい口調を保ったまま
 60〜70文字（改行を除いた文字数・最大でも80文字）に短く書き直してください。
 - 一番伝えたいことだけに絞り、説明や具体例は削る
 - 改行は意味の区切りで入れる（1行15〜20文字目安）
 - ハッシュタグ・絵文字・見出しなし
-- 本文のみ出力（説明不要）
+- 本文のみ出力（説明不要）"""
 
-{text}"""
+
+def shorten_text(client, text):
+    """長すぎる投稿文を、意味を保ったまま60〜70文字に短く書き直す"""
     try:
         msg = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=200,
-            messages=[{"role": "user", "content": p}]
+            system=[
+                {
+                    "type": "text",
+                    "text": _SHORTEN_SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            messages=[{"role": "user", "content": text}]
         )
         out = msg.content[0].text.strip()
         out_lines = [l for l in out.splitlines() if not l.strip().startswith("#")]
@@ -769,14 +778,9 @@ def shorten_text(client, text):
         return text
 
 
-def verify_post(text):
-    """生成した投稿文の医学的正確性をチェックする。明らかな誤りがあればFalseを返す"""
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-    verify_prompt = f"""あなたは厳格な歯科医師です。以下のSNS投稿文を医学的観点で厳しくチェックしてください。
-
-【投稿文】
-{text}
+# verify_post()のチェック基準（静的・投稿ごとに変わらない）。system側でcache_control
+# をかける。チェック対象の投稿文（動的）はuserメッセージ側に残す。
+_VERIFY_SYSTEM_PROMPT = """あなたは厳格な歯科医師です。以下のSNS投稿文を医学的観点で厳しくチェックしてください。
 
 以下のいずれかに該当する場合はNGとしてください：
 1. 医学的・科学的根拠のない因果関係の主張（例：「歯磨きしているのにイライラする→飲み物が原因」のような無関係な事象を繋げる）
@@ -791,10 +795,22 @@ OKとするのは、歯科・口腔医学として一般的に認められた事
 
 判定：問題なければ「OK」、該当する場合は「NG: （理由を一言で）」とだけ答えてください。"""
 
+
+def verify_post(text):
+    """生成した投稿文の医学的正確性をチェックする。明らかな誤りがあればFalseを返す"""
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=100,
-        messages=[{"role": "user", "content": verify_prompt}]
+        system=[
+            {
+                "type": "text",
+                "text": _VERIFY_SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        messages=[{"role": "user", "content": f"【投稿文】\n{text}"}]
     )
     result = response.content[0].text.strip()
     if result.startswith("OK"):
@@ -804,18 +820,17 @@ OKとするのは、歯科・口腔医学として一般的に認められた事
         return False
 
 
-def generate_post(post_type, theme, used_texts, topic, sodan_used=False, day_topics=None, existing_texts=None):
-    """投稿文を生成する（過去3週間＋今週分の重複チェック・医学的正確性チェック）。
+def _build_static_generation_prompt():
+    """generate_post()の生成プロンプトのうち「投稿ごとに変わらない静的部分」を
+    1つの大きなテキストブロックにまとめて返す。
 
-    戻り値: (text, ok) のタプル。
-    ok=Falseは文字数・医学・重複チェックが全滅したことを示す。
-    呼び出し元はok=Falseの行を承認列に「スキップ」として書き込み、
-    自動投稿されないようにすること（本文に警告文を混ぜて投稿してしまう事故を防ぐため）。
+    プロンプトキャッシュ（cache_control）を確実にヒットさせるため、CLINIC_INFO・
+    REFERENCE_KNOWLEDGE・Obsidian知識ベース・実績上位投稿（winning_posts.md）・
+    ジャンル別の書き方ガイド・書き方の共通ルール（条件）など、投稿ごとに変わらない
+    情報をすべてここに集約する。テーマ・トピック・ジャンル・当日の他トピック・
+    過去投稿リストなど投稿ごとに変わる情報はgenerate_post()内でuserメッセージ側に
+    残す。静的部分の文言・内容はここで変更しない（並び順の整理のみ）。
     """
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-    used_list = "\n".join([f"・{t}" for t in used_texts[-200:]]) if used_texts else "なし"
-
     # Obsidian知識ベースを読み込む
     obsidian_knowledge = load_obsidian_knowledge()
     obsidian_section = ""
@@ -832,40 +847,27 @@ def generate_post(post_type, theme, used_texts, topic, sodan_used=False, day_top
             f"{winning_posts_full_text[:3000]}\n"
         )
 
-    # ジャンル別の書き方ガイド
-    genre_guide = GENRE_GUIDE.get(post_type, "")
-    nsen_instruction = ""
-    if genre_guide:
-        nsen_instruction = f"- このジャンル「{post_type}」の書き方：{genre_guide}\n"
+    # ジャンル別の書き方ガイド（全ジャンル分をここにまとめる。どのジャンルかは
+    # generate_post()内のuserメッセージで指定する）
+    genre_guide_block = "\n".join(f"・{genre}：{desc}" for genre, desc in GENRE_GUIDE.items())
 
-    # 導線ジャンルで「ご相談ください」が当日すでに使われた場合は禁止
-    sodan_instruction = ""
-    if post_type == "導線" and sodan_used:
-        sodan_instruction = "- 「ご相談ください」は本日すでに使用済みのため使わない\n"
-
-    prompt = f"""あなたは歯科クリニックのSNS担当者です。
-Threadsに投稿する「{theme}」というテーマ・ジャンル「{post_type}」の投稿文を1つ書いてください。
+    return f"""あなたは歯科クリニックのSNS担当者です。
+Threadsに投稿する文章を書きます。
 
 {CLINIC_INFO}
 
 【参考情報（トーン・口調・切り口の参考のみ。内容・フレーズをそのままコピーしないこと）】
 {REFERENCE_KNOWLEDGE}{obsidian_section}{winning_posts_section}
-【今回必ず扱うトピック（このテーマのみで書くこと・他のテーマを混ぜない）】
-{topic}
-
-【本日この1日に使用する全トピック一覧（内容・切り口・キーワードが絶対に重複してはいけない）】
-{chr(10).join([f"・{t}" for t in (day_topics or [topic])])}
-
-【過去3週間＋今週生成済みの投稿（テーマ・内容・フレーズの重複・類似を厳禁）】
-{used_list}
+【ジャンル別の書き方ガイド】
+{genre_guide_block}
 
 条件：
 - 【最優先・絶対厳守】本文は必ず60〜70文字に収める（改行を除いた文字数）。どんなに長くても80文字を絶対に超えない。短く簡潔に書くことを最優先する。説明を盛り込みすぎず、一番伝えたいことだけに絞る
 - 院名（クリニック名）は一切入れない
 - 「主要駅近く」「咬合専門医」「女性院長」という表現は使わない
-- 必ず上記【今回必ず扱うトピック】のテーマのみで書く。他のテーマ・情報を混ぜない
-- 上記【過去3週間＋今週生成済み】リストに含まれるテーマ・キーワード・フレーズと絶対に重複・類似させない
-- 上記リストに「トピック:〜」として記載されているトピックは使用しない
+- 必ず以下の【今回必ず扱うトピック】のテーマのみで書く。他のテーマ・情報を混ぜない
+- 以下の【過去3週間＋今週生成済み】リストに含まれるテーマ・キーワード・フレーズと絶対に重複・類似させない
+- 以下のリストに「トピック:〜」として記載されているトピックは使用しない
 - 【参考情報】はあくまでトーン・口調の参考であり、文章や事例をそのまま流用しないこと
 - 文末は「です。」「ます。」「しょう。」のいずれかで終わる
 - ハッシュタグ・絵文字なし
@@ -898,7 +900,55 @@ Threadsに投稿する「{theme}」というテーマ・ジャンル「{post_typ
 - 「きちんと歯磨きをしていても歯ぐきの炎症は改善しない」は誤り。正しい歯磨きはプラークを除去し歯肉炎の改善に効果がある
 - 「食事のリズムを整えるだけで歯周病の進行を大きく遅らせることができる」は誤り。歯周病の進行抑制にはプラークコントロール・定期的な歯科クリーニングが必要であり、食事改善「だけ」で解決するような表現は使わない
 - セラミッククラウンの寿命に「○○年続く」という具体的な年数を保証する表現は使わない。寿命は噛み合わせ・口腔ケア・素材・歯ぐきの状態など個人差が大きく、年数保証は患者への誤った期待になる。「長期間使用できる」「耐久性が高い」程度の表現にとどめること
-{nsen_instruction}{sodan_instruction}- 本文のみ出力（説明不要）"""
+- 本文のみ出力（説明不要）"""
+
+
+def generate_post(post_type, theme, used_texts, topic, sodan_used=False, day_topics=None, existing_texts=None):
+    """投稿文を生成する（過去3週間＋今週分の重複チェック・医学的正確性チェック）。
+
+    戻り値: (text, ok) のタプル。
+    ok=Falseは文字数・医学・重複チェックが全滅したことを示す。
+    呼び出し元はok=Falseの行を承認列に「スキップ」として書き込み、
+    自動投稿されないようにすること（本文に警告文を混ぜて投稿してしまう事故を防ぐため）。
+    """
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    # 直近100件・各先頭40文字に縮小。これは「AIに切り口の重複を避けさせるための
+    # ヒント」に過ぎず、真の重複防止はis_too_similar()（全文比較・ローカル処理、
+    # API呼び出し無し）が担っているため、ここを縮めても重複防止の精度は落ちない。
+    used_list = "\n".join([f"・{t[:40]}" for t in used_texts[-100:]]) if used_texts else "なし"
+
+    # 静的部分（CLINIC_INFO・REFERENCE_KNOWLEDGE・知識ベース・実績投稿・ジャンル別
+    # ガイド・書き方の共通ルールなど投稿ごとに変わらない情報）はsystemパラメータに
+    # まとめ、cache_control（プロンプトキャッシュ）を効かせる。連続実行のため
+    # 5分TTLのキャッシュがほぼ全ヒットし、APIコストを大きく削減できる。
+    static_system_prompt = _build_static_generation_prompt()
+
+    # ジャンル別の書き方ガイドは上記system側【ジャンル別の書き方ガイド】に全ジャンル分
+    # 含めてあるため、ここでは該当ジャンルを指し示すだけでよい（内容の重複送信を避ける）
+    genre_guide = GENRE_GUIDE.get(post_type, "")
+    nsen_instruction = ""
+    if genre_guide:
+        nsen_instruction = f"- 今回のジャンルは「{post_type}」です。上記【ジャンル別の書き方ガイド】の「{post_type}」の項目に従って書くこと\n"
+
+    # 導線ジャンルで「ご相談ください」が当日すでに使われた場合は禁止
+    sodan_instruction = ""
+    if post_type == "導線" and sodan_used:
+        sodan_instruction = "- 「ご相談ください」は本日すでに使用済みのため使わない\n"
+
+    # 動的部分（テーマ・トピック・ジャンル・当日の他トピック・過去投稿リスト・
+    # 「ご相談ください」制約など投稿ごとに変わる情報）はuserメッセージに残す
+    prompt = f"""Threadsに投稿する「{theme}」というテーマ・ジャンル「{post_type}」の投稿文を1つ書いてください。
+
+【今回必ず扱うトピック（このテーマのみで書くこと・他のテーマを混ぜない）】
+{topic}
+
+【本日この1日に使用する全トピック一覧（内容・切り口・キーワードが絶対に重複してはいけない）】
+{chr(10).join([f"・{t}" for t in (day_topics or [topic])])}
+
+【過去3週間＋今週生成済みの投稿（テーマ・内容・フレーズの重複・類似を厳禁）】
+{used_list}
+{nsen_instruction}{sodan_instruction}"""
 
     existing_texts = existing_texts or []
 
@@ -910,6 +960,13 @@ Threadsに投稿する「{theme}」というテーマ・ジャンル「{post_typ
         message = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=300,
+            system=[
+                {
+                    "type": "text",
+                    "text": static_system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             messages=[{"role": "user", "content": prompt}]
         )
         text = message.content[0].text.strip()
