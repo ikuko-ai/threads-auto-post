@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import anthropic
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+from skip_dates import SKIP_DATES
 
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 GOOGLE_CREDENTIALS = os.environ["GOOGLE_CREDENTIALS"]
@@ -1097,6 +1098,11 @@ def main():
     for day_offset in range(7):
         target_date = today + timedelta(days=day_offset + 1)
         date_str = target_date.strftime("%Y/%m/%d")
+
+        # 投稿停止日は生成そのものを行わない（行を作らない＝APIコストもかからない）
+        if date_str in SKIP_DATES:
+            print(f"投稿停止日のため生成を見送り: {date_str}")
+            continue
 
         # ご相談フラグは1日ごとにリセット
         sodan_used = False

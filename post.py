@@ -10,6 +10,7 @@ import anthropic
 JST = timezone(timedelta(hours=9))
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+from skip_dates import SKIP_DATES
 
 THREADS_TOKEN = os.environ["THREADS_ACCESS_TOKEN"]
 THREADS_USER_ID = os.environ["THREADS_USER_ID"]
@@ -33,6 +34,11 @@ def get_post_from_sheet():
 
     now = datetime.now(JST)
     today_str = now.strftime("%Y/%m/%d")
+
+    # 投稿停止日は、シートに未投稿の行が残っていても一切投稿しない
+    if today_str in SKIP_DATES:
+        print(f"投稿停止日のため見送り: {today_str}")
+        return []
 
     result = sheet.values().get(
         spreadsheetId=SPREADSHEET_ID,
