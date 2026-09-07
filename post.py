@@ -13,7 +13,6 @@ from googleapiclient.discovery import build
 from skip_dates import SKIP_DATES
 
 THREADS_TOKEN = os.environ["THREADS_ACCESS_TOKEN"]
-THREADS_USER_ID = os.environ["THREADS_USER_ID"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 GOOGLE_CREDENTIALS = os.environ["GOOGLE_CREDENTIALS"]
 SPREADSHEET_ID = "1UlrXFEHzF4TClneFBVBMJ2Ash8-eZLMM5n5-l0_jFG8"
@@ -113,9 +112,16 @@ def generate_fallback_text():
     )
     return message.content[0].text
 
-def post_to_threads(text):
+def get_threads_user_id():
+    """投稿先のユーザーIDをトークンから取り直す。
+    IDを環境変数に固定しておくと、Meta側でIDが変わったときに投稿が全滅する（2026-09-04の停止原因）"""
+    url = f"{BASE}/me?fields=id&access_token={THREADS_TOKEN}"
+    with urllib.request.urlopen(url) as res:
+        return json.loads(res.read())["id"]
+
+def post_to_threads(user_id, text):
     # コンテナ作成
-    url = f"{BASE}/{THREADS_USER_ID}/threads"
+    url = f"{BASE}/{user_id}/threads"
     params = urllib.parse.urlencode({
         "media_type": "TEXT",
         "text": text,
@@ -128,7 +134,7 @@ def post_to_threads(text):
     time.sleep(5)
 
     # 公開
-    url = f"{BASE}/{THREADS_USER_ID}/threads_publish"
+    url = f"{BASE}/{user_id}/threads_publish"
     params = urllib.parse.urlencode({
         "creation_id": container_id,
         "access_token": THREADS_TOKEN
@@ -141,7 +147,9 @@ def post_to_threads(text):
     print(f"内容: {text}")
 
 texts = get_post_from_sheet()
-for i, text in enumerate(texts):
-    if i > 0:
-        time.sleep(10)  # 連続投稿の間に10秒待機
-    post_to_threads(text)
+if texts:
+    user_id = get_threads_user_id()
+    for i, text in enumerate(texts):
+        if i > 0:
+            time.sleep(10)  # 連続投稿の間に10秒待機
+        post_to_threads(user_id, text)
