@@ -6,6 +6,7 @@ import anthropic
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from skip_dates import SKIP_DATES
+from text_clean import clean_post_text
 
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 GOOGLE_CREDENTIALS = os.environ["GOOGLE_CREDENTIALS"]
@@ -768,6 +769,7 @@ _SHORTEN_SYSTEM_PROMPT = """次の歯科クリニックのSNS投稿文を、意�
 - 一番伝えたいことだけに絞り、説明や具体例は削る
 - 改行は意味の区切りで入れる（1行15〜20文字目安）
 - ハッシュタグ・絵文字・見出しなし
+- 「（全68文字）」などの文字数表記・注釈は書かない
 - 本文のみ出力（説明不要）"""
 
 
@@ -786,9 +788,7 @@ def shorten_text(client, text):
             ],
             messages=[{"role": "user", "content": text}]
         )
-        out = msg.content[0].text.strip()
-        out_lines = [l for l in out.splitlines() if not l.strip().startswith("#")]
-        return "\n".join(out_lines).strip()
+        return clean_post_text(msg.content[0].text)
     except Exception:
         return text
 
@@ -915,6 +915,7 @@ Threadsに投稿する文章を書きます。
 - 「きちんと歯磨きをしていても歯ぐきの炎症は改善しない」は誤り。正しい歯磨きはプラークを除去し歯肉炎の改善に効果がある
 - 「食事のリズムを整えるだけで歯周病の進行を大きく遅らせることができる」は誤り。歯周病の進行抑制にはプラークコントロール・定期的な歯科クリーニングが必要であり、食事改善「だけ」で解決するような表現は使わない
 - セラミッククラウンの寿命に「○○年続く」という具体的な年数を保証する表現は使わない。寿命は噛み合わせ・口腔ケア・素材・歯ぐきの状態など個人差が大きく、年数保証は患者への誤った期待になる。「長期間使用できる」「耐久性が高い」程度の表現にとどめること
+- 「（全68文字）」「文字数：〇字」などの文字数表記・注釈・説明は絶対に書かない
 - 本文のみ出力（説明不要）"""
 
 
@@ -984,10 +985,8 @@ def generate_post(post_type, theme, used_texts, topic, sodan_used=False, day_top
             ],
             messages=[{"role": "user", "content": prompt}]
         )
-        text = message.content[0].text.strip()
-        # 「# Threads投稿文」などmarkdown見出し行を除去
-        lines = [l for l in text.splitlines() if not l.strip().startswith("#")]
-        text = "\n".join(lines).strip()
+        # 「# Threads投稿文」などの見出しや「（全68文字）」などの文字数表記を除去
+        text = clean_post_text(message.content[0].text)
 
         # 長すぎる場合はAIに要約圧縮させる（ゼロから書くより確実に短くなる）
         if char_count(text) > MAX_CHARS:

@@ -11,6 +11,7 @@ JST = timezone(timedelta(hours=9))
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from skip_dates import SKIP_DATES
+from text_clean import clean_post_text
 
 THREADS_TOKEN = os.environ["THREADS_ACCESS_TOKEN"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
@@ -83,6 +84,8 @@ def get_post_from_sheet():
         row_text = row[3]
         row_revised = row[5] if len(row) > 5 else ""
         text = row_revised.strip() if row_revised.strip() else row_text.strip()
+        # シートに「（全68文字）」などが残っていても、投稿文以外は送らない
+        text = clean_post_text(text)
 
         # 投稿済みに更新
         sheet.values().update(
@@ -120,6 +123,11 @@ def get_threads_user_id():
         return json.loads(res.read())["id"]
 
 def post_to_threads(user_id, text):
+    # 最終関門：どの経路の文章でも、投稿文以外（文字数表記など）は送らない
+    text = clean_post_text(text)
+    if not text:
+        print("本文が空のため投稿しません")
+        return
     # コンテナ作成
     url = f"{BASE}/{user_id}/threads"
     params = urllib.parse.urlencode({
