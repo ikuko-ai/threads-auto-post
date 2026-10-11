@@ -725,23 +725,24 @@ def _shares_long_phrase(a, b, n=18):
     return any(ca[i:i + n] in grams_b for i in range(len(ca) - n + 1))
 
 
-def is_too_similar(text, existing_texts, threshold=0.30):
-    """既存投稿のいずれかと類似していたらTrueを返す。
-    ①書き出し一致 ②同一フレーズの使い回し ③Jaccard類似度 のいずれか。"""
+def find_similar(text, existing_texts, threshold=0.30):
+    """既存投稿のいずれかと類似していれば、その理由（文字列）を返す。類似なしはNone。
+    ①書き出し一致 ②同一フレーズの使い回し ③Jaccard類似度 のいずれか。
+    理由には相手の投稿の先頭25字を含み、再生成プロンプトへのフィードバックに使う。"""
     new_bg = _char_bigrams(text)
     if not new_bg:
-        return False
+        return None
     new_head = _head(text)
     for existing in existing_texts:
         # ① 書き出しが酷似（先頭10字が一致）→ 同じ切り口の重複とみなす
         ex_head = _head(existing)
         if len(new_head) >= 8 and len(ex_head) >= 8 and new_head[:10] == ex_head[:10]:
             print(f"  ✗ 重複検出（書き出し一致）: {existing[:25]}...")
-            return True
+            return f"過去投稿『{existing[:25]}』と書き出しが同じ"
         # ② 同じフレーズ（18字以上）の使い回し
         if _shares_long_phrase(text, existing):
             print(f"  ✗ 重複検出（同一フレーズ）: {existing[:25]}...")
-            return True
+            return f"過去投稿『{existing[:25]}』と同じフレーズ（18字以上）を使っている"
         # ③ バイグラムのJaccard類似度
         ex_bg = _char_bigrams(existing)
         if not ex_bg:
@@ -753,8 +754,13 @@ def is_too_similar(text, existing_texts, threshold=0.30):
         jaccard = inter / union
         if jaccard >= threshold:
             print(f"  ✗ 重複検出（類似度{jaccard:.2f}）: {existing[:25]}...")
-            return True
-    return False
+            return f"過去投稿『{existing[:25]}』と内容が似ている（類似度{jaccard:.2f}）"
+    return None
+
+
+def is_too_similar(text, existing_texts, threshold=0.30):
+    """既存投稿のいずれかと類似していたらTrueを返す（find_similar()のbool版）"""
+    return find_similar(text, existing_texts, threshold) is not None
 
 
 def char_count(text):
@@ -812,7 +818,9 @@ OKとするのは、歯科・口腔医学として一般的に認められた事
 
 
 def verify_post(text):
-    """生成した投稿文の医学的正確性をチェックする。明らかな誤りがあればFalseを返す"""
+    """生成した投稿文の医学的正確性をチェックする。
+    戻り値: (ok, reason)。明らかな誤りがあればok=Falseで、reasonにNG理由を入れる
+    （再生成プロンプトへのフィードバックに使う）。OKのときreasonは空文字"""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     response = client.messages.create(
@@ -829,10 +837,11 @@ def verify_post(text):
     )
     result = response.content[0].text.strip()
     if result.startswith("OK"):
-        return True
+        return True, ""
     else:
         print(f"  ✗ 医学チェックNG: {result}")
-        return False
+        reason = result[3:].lstrip(":：").strip() if result.startswith("NG") else result
+        return False, reason or "医学的根拠が不十分"
 
 
 def _build_static_generation_prompt():
@@ -919,8 +928,12 @@ Threadsに投稿する文章を書きます。
 - 本文のみ出力（説明不要）"""
 
 
-def generate_post(post_type, theme, used_texts, topic, sodan_used=False, day_topics=None, existing_texts=None):
+def generate_post(post_type, theme, used_texts, topic, sodan_used=False, day_topics=None, existing_texts=None,
+                  max_attempts=6):
     """投稿文を生成する（過去3週間＋今週分の重複チェック・医学的正確性チェック）。
+
+    リトライ時は前回の不合格理由（文字数・医学NG理由・重複相手）をuserメッセージ側に
+    追記して書き直させる（system側はプロンプトキャッシュのため変えない）。
 
     戻り値: (text, ok) のタプル。
     ok=Falseは文字数・医学・重複チェックが全滅したことを示す。
@@ -968,11 +981,12 @@ def generate_post(post_type, theme, used_texts, topic, sodan_used=False, day_top
 
     existing_texts = existing_texts or []
 
-    # 文字数・医学・重複チェックを通るまで最大6回リトライ
+    # 文字数・医学・重複チェックを通るまで最大max_attempts回（通常6回）リトライ
     MAX_CHARS = 80  # 60〜70字目標。80字を超えたら短縮→それでも超なら作り直す
     text = ""
     shortest = None  # 最短候補（全滅時の保険）
-    for attempt in range(6):
+    feedback = ""  # 前回の不合格理由（リトライ時にuserメッセージへ追記する）
+    for attempt in range(max_attempts):
         message = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=300,
@@ -983,7 +997,7 @@ def generate_post(post_type, theme, used_texts, topic, sodan_used=False, day_top
                     "cache_control": {"type": "ephemeral"},
                 }
             ],
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt + feedback}]
         )
         # 「# Threads投稿文」などの見出しや「（全68文字）」などの文字数表記を除去
         text = clean_post_text(message.content[0].text)
@@ -1001,14 +1015,22 @@ def generate_post(post_type, theme, used_texts, topic, sodan_used=False, day_top
         # ① 文字数チェック
         if char_count(text) > MAX_CHARS:
             print(f"  再生成します（文字数{char_count(text)}字オーバー・試行{attempt + 2}回目）")
+            feedback = (f"\n【前回案は{char_count(text)}文字で長すぎました】"
+                        "60〜70文字に収まるよう、一番伝えたいことだけに絞って書き直すこと\n")
             continue
         # ② 医学チェック
-        if not verify_post(text):
+        verified, ng_reason = verify_post(text)
+        if not verified:
             print(f"  再生成します（医学チェックNG・試行{attempt + 2}回目）")
+            feedback = (f"\n【前回案は医学チェックでNG（理由：{ng_reason}）】"
+                        "根拠の確かな一般的事実だけで書き直すこと\n")
             continue
         # ③ 重複チェック（同日＋過去分との類似）
-        if is_too_similar(text, existing_texts):
+        similar_reason = find_similar(text, existing_texts)
+        if similar_reason:
             print(f"  再生成します（重複検出・試行{attempt + 2}回目）")
+            feedback = (f"\n【前回案は{similar_reason}】"
+                        "書き出し・切り口・表現をすべて変えて、別の角度から書き直すこと\n")
             continue
         # すべてクリア
         return text, True
@@ -1017,6 +1039,57 @@ def generate_post(post_type, theme, used_texts, topic, sodan_used=False, day_top
     # （本文への「※要確認」付与は廃止：付与すると承認列がOKのままの行がそのまま投稿されてしまうため）
     print("  警告：チェックNGのため、この行は承認列に「スキップ」を設定します")
     return (shortest or text), False
+
+
+def pick_alternative_topics(theme, topic, avoid_topics, theme_counts=None, limit=2):
+    """代替トピックの候補を最大limit件返す。
+    まず同じテーマの未使用トピック、無ければ他テーマから選ぶ。
+    他テーマはTHEME_WEEKLY_CAPの上限に達していないテーマだけを対象にし、
+    テーマ偏りを崩さない（theme_counts: 今週のテーマ別の配分済み件数）。"""
+    theme_counts = theme_counts or {}
+    same = [t for t in TOPICS_BY_CATEGORY.get(theme, []) if t != topic and t not in avoid_topics]
+    random.shuffle(same)
+    others = []
+    for th, topics in TOPICS_BY_CATEGORY.items():
+        if th == theme:
+            continue
+        cap = THEME_WEEKLY_CAP.get(th)
+        if cap is not None and theme_counts.get(th, 0) >= cap:
+            continue
+        others += [t for t in topics if t not in avoid_topics]
+    random.shuffle(others)
+    return (same + others)[:limit]
+
+
+def generate_post_with_fallback(post_type, theme, used_texts, topic, sodan_used=False, day_topics=None,
+                                existing_texts=None, avoid_topics=None, theme_counts=None):
+    """generate_post()が6回全滅したら、別トピックで最大4回（2トピック×2回）再挑戦する。
+
+    戻り値: (text, ok, topic, post_type, theme, rescued)
+    rescued=Trueは代替トピックで成功したことを示し、topic/post_type/themeは代替側の値になる。
+    それでも全滅ならok=False・元のトピックの最短候補を返す（呼び出し元が「スキップ」にする）。
+    """
+    text, ok = generate_post(post_type, theme, used_texts, topic, sodan_used,
+                             day_topics=day_topics, existing_texts=existing_texts)
+    if ok:
+        return text, True, topic, post_type, theme, False
+
+    # 当日のトピック・今週配分済みのトピックは避ける
+    avoid = set(avoid_topics or []) | set(day_topics or []) | {topic}
+    for alt in pick_alternative_topics(theme, topic, avoid, theme_counts):
+        alt_type = TOPIC_TO_GENRE[alt]
+        alt_theme = TOPIC_TO_CATEGORY[alt]
+        print(f"  代替トピックで再挑戦: [{alt_type}] トピック:{alt}")
+        alt_day_topics = [alt if t == topic else t for t in (day_topics or [topic])]
+        alt_text, alt_ok = generate_post(alt_type, alt_theme, used_texts, alt, sodan_used,
+                                         day_topics=alt_day_topics, existing_texts=existing_texts,
+                                         max_attempts=2)
+        if alt_ok:
+            return alt_text, True, alt, alt_type, alt_theme, True
+
+    # 全滅：元のトピックの最短候補を返す（承認列は「スキップ」になる）
+    return text, False, topic, post_type, theme, False
+
 
 def clear_future_rows(service, today):
     """明日以降の行と古すぎる履歴を削除する。
@@ -1093,6 +1166,13 @@ def main():
 
     # 1週間分のトピックを先にまとめて配分（同トピックの間隔を最大化）
     week_schedule = build_week_schedule(days=7, per_day=len(SCHEDULE))
+    # 代替トピック選定用：今週配分済みのトピックと、テーマ別の配分件数
+    week_topics = {t for day in week_schedule for t in day}
+    theme_counts = {}
+    for t in (t for day in week_schedule for t in day):  # 枠数で数える（上限は枠数基準）
+        th = TOPIC_TO_CATEGORY[t]
+        theme_counts[th] = theme_counts.get(th, 0) + 1
+    ok_count = rescued_count = skip_count = 0
 
     for day_offset in range(7):
         target_date = today + timedelta(days=day_offset + 1)
@@ -1116,8 +1196,21 @@ def main():
             post_type = TOPIC_TO_GENRE[topic]
             theme = TOPIC_TO_CATEGORY[topic]
             print(f"生成中: {date_str} {time_str} [{post_type}] トピック:{topic}")
-            text, ok = generate_post(post_type, theme, all_used_texts, topic, sodan_used,
-                                      day_topics=day_topics, existing_texts=all_full_texts)
+            text, ok, topic, post_type, theme, rescued = generate_post_with_fallback(
+                post_type, theme, all_used_texts, topic, sodan_used,
+                day_topics=day_topics, existing_texts=all_full_texts,
+                avoid_topics=week_topics, theme_counts=theme_counts)
+            if rescued:
+                # 代替トピックで救済：当日一覧・今週配分・テーマ別件数を代替側に合わせる
+                theme_counts[TOPIC_TO_CATEGORY[day_topics[i]]] -= 1
+                theme_counts[theme] = theme_counts.get(theme, 0) + 1
+                week_topics.add(topic)
+                day_topics[i] = topic
+                rescued_count += 1
+            if ok:
+                ok_count += 1
+            else:
+                skip_count += 1
             # 「ご相談ください」使用を追跡
             if "ご相談ください" in text.replace("\n", ""):
                 sodan_used = True
@@ -1144,6 +1237,7 @@ def main():
         print(f"{date_str} の{len(day_rows)}件を書き込みました")
 
     print(f"完了：合計{total_rows}件の投稿文を生成しました")
+    print(f"内訳：OK {ok_count}件（うち代替トピックで救済 {rescued_count}件）／スキップ {skip_count}件")
 
 if __name__ == "__main__":
     main()
