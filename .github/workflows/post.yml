@@ -9,6 +9,11 @@ on:
     - cron: '17 1,6,10,14 * * *'  # JST 10:17/15:17/19:17/23:17 保険枠（GitHubが投稿枠のcronを丸ごとスキップした際、当日分をキャッチアップ投稿する）
   workflow_dispatch:
 
+# Apps Scriptからの起動とcronが重なっても二重投稿しないよう、1本ずつ実行する
+concurrency:
+  group: threads-post
+  cancel-in-progress: false
+
 jobs:
   post:
     runs-on: ubuntu-latest
