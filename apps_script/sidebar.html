@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: sans-serif; padding: 12px; font-size: 13px; }
+    .info-box {
+      background: #f0f4ff;
+      border-left: 4px solid #4a90d9;
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 12px;
+      line-height: 1.6;
+    }
+    .label { color: #666; font-size: 11px; }
+    .post-text { white-space: pre-wrap; margin: 4px 0; }
+    .current { font-weight: bold; color: #333; }
+    .btn {
+      width: 100%;
+      padding: 14px;
+      margin: 5px 0;
+      font-size: 15px;
+      font-weight: bold;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn-ok    { background: #34a853; color: white; }
+    .btn-skip  { background: #ea4335; color: white; }
+    .btn-fix   { background: #fbbc04; color: #333; }
+    .result {
+      margin-top: 10px;
+      padding: 8px;
+      border-radius: 4px;
+      text-align: center;
+      font-weight: bold;
+      display: none;
+    }
+    .note { font-size: 11px; color: #888; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="info-box" id="info">
+    <span class="label">行を選択してください</span>
+  </div>
+
+  <button class="btn btn-ok"   onclick="approve('OK')">✅ OK（このまま投稿）</button>
+  <button class="btn btn-skip" onclick="approve('スキップ')">🚫 スキップ（投稿しない）</button>
+  <button class="btn btn-fix"  onclick="approve('修正')">✏️ 修正（F列に修正文を入力）</button>
+
+  <div class="result" id="result"></div>
+  <p class="note">※修正の場合はF列「修正後の投稿文」に文章を入力してください。</p>
+
+  <script>
+    function approve(value) {
+      const colors = { 'OK': '#34a853', 'スキップ': '#ea4335', '修正': '#fbbc04' };
+      const result = document.getElementById('result');
+      result.style.display = 'none';
+      google.script.run
+        .withSuccessHandler(function(v) {
+          result.style.display = 'block';
+          result.style.background = colors[v] || '#eee';
+          result.style.color = v === '修正' ? '#333' : 'white';
+          result.textContent = '「' + v + '」を設定しました';
+          loadRow();
+        })
+        .withFailureHandler(function(e) {
+          result.style.display = 'block';
+          result.style.background = '#fee';
+          result.textContent = 'エラー: ' + e.message;
+        })
+        .setApproval(value);
+    }
+
+    function loadRow() {
+      google.script.run
+        .withSuccessHandler(function(data) {
+          const box = document.getElementById('info');
+          if (!data) {
+            box.innerHTML = '<span class="label">2行目以降を選択してください</span>';
+            return;
+          }
+          const statusColor = data.status === 'OK' ? '#34a853' : data.status === 'スキップ' ? '#ea4335' : data.status === '修正' ? '#e67700' : '#888';
+          box.innerHTML =
+            '<span class="label">日付・時間</span><br>' +
+            '<b>' + data.date + '&nbsp;' + data.time + '</b>&nbsp;[' + data.type + ']<br><br>' +
+            '<span class="label">投稿文</span><br>' +
+            '<div class="post-text">' + data.text.replace(/\n/g, '<br>') + '</div><br>' +
+            '<span class="label">現在の承認状態</span><br>' +
+            '<span style="color:' + statusColor + ';font-weight:bold;">' + (data.status || '未設定') + '</span>';
+        })
+        .getSelectedRow();
+    }
+
+    setInterval(loadRow, 1500);
+    loadRow();
+  </script>
+</body>
+</html>
