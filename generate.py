@@ -1,6 +1,7 @@
 import os
 import json
 import random
+import re
 from datetime import datetime, timedelta
 import anthropic
 from google.oauth2.service_account import Credentials
@@ -836,11 +837,14 @@ def verify_post(text):
         messages=[{"role": "user", "content": f"【投稿文】\n{text}"}]
     )
     result = response.content[0].text.strip()
-    if result.startswith("OK"):
+    # 「**判定：OK**」のように太字記号や「判定：」を付けて答えることがあるので取り除いてから判定する
+    verdict = re.sub(r"[*#`]", "", result).strip()
+    verdict = re.sub(r"^判定\s*[:：]?\s*", "", verdict)
+    if verdict.upper().startswith("OK"):
         return True, ""
     else:
         print(f"  ✗ 医学チェックNG: {result}")
-        reason = result[3:].lstrip(":：").strip() if result.startswith("NG") else result
+        reason = verdict[2:].lstrip(":： ").strip() if verdict.upper().startswith("NG") else result
         return False, reason or "医学的根拠が不十分"
 
 
